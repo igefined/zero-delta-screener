@@ -1,7 +1,6 @@
-.PHONY: help build run test clean docker-build docker-run docker-stop fmt vendor
+.PHONY: help build run test clean docker-build docker-run docker-stop fmt vendor lint
 
 # Variables
-GO := go
 APP_NAME := screener
 DOCKER_IMAGE := zero-delta-screener
 DOCKER_TAG := latest
@@ -10,6 +9,7 @@ LDFLAGS := -ldflags="-w -s"
 MAIN_PATH := main.go
 BIN_DIR := bin
 BIN_PATH := $(BIN_DIR)/$(APP_NAME)
+GOLANGCI_LINT_VERSION := v1.62.2
 
 # Colors for output
 RED := \033[0;31m
@@ -144,9 +144,15 @@ docker-compose-logs:
 ## install-tools: Install development tools
 install-tools:
 	@echo "$(YELLOW)Installing development tools...$(NC)"
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	@go install golang.org/x/tools/cmd/goimports@latest
 	@echo "$(GREEN)Tools installed$(NC)"
+
+## lint: Run golangci-lint
+lint:
+	@echo "$(YELLOW)Running linter...$(NC)"
+	@golangci-lint run ./...
+	@echo "$(GREEN)Linting complete$(NC)"
 
 ## check: Run all checks (fmt, vet, lint, test)
 check: fmt vet lint test

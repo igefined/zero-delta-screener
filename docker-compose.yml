@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  screener:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zero-delta-screener:latest
+    container_name: zero-delta-screener
+    restart: unless-stopped
+    environment:
+      # Rate Exchange Configuration
+      RATE_API_URL: ${RATE_API_URL:-https://api.rate.com}
+      RATE_API_KEY: ${RATE_API_KEY}
+      
+      # Bybit Exchange Configuration  
+      BYBIT_API_URL: ${BYBIT_API_URL:-https://api.bybit.com}
+      BYBIT_API_KEY: ${BYBIT_API_KEY}
+      BYBIT_API_SECRET: ${BYBIT_API_SECRET}
+      
+      # Application Configuration
+      TZ: ${TZ:-UTC}
+    volumes:
+      # Mount for persistent data if needed in future
+      - ./data:/app/data
+    networks:
+      - screener-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Uncomment when adding REST API
+    # ports:
+    #   - "8080:8080"
+    
+    # Health check can be added when REST API is implemented
+    # healthcheck:
+    #   test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 10s
+
+  # Add Redis for caching (optional, for future use)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: zero-delta-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   networks:
+  #     - screener-network
+  #   command: redis-server --appendonly yes
+
+  # Add PostgreSQL for persistence (optional, for future use)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: zero-delta-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: screener
+  #     POSTGRES_USER: ${POSTGRES_USER:-screener}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - screener-network
+
+networks:
+  screener-network:
+    driver: bridge
+
+# Volumes for persistent data (uncomment when needed)
+# volumes:
+#   redis-data:
+#   postgres-data:

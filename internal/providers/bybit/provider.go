@@ -11,11 +11,11 @@ import (
 )
 
 type Provider struct {
-	config config.BybitConfig
+	config config.ByBitConfig
 	logger *zap.Logger
 }
 
-func NewProvider(cfg config.BybitConfig, logger *zap.Logger) *Provider {
+func NewProvider(cfg config.ByBitConfig, logger *zap.Logger) *Provider {
 	return &Provider{
 		config: cfg,
 		logger: logger.Named("bybit"),

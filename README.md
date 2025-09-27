@@ -4,7 +4,7 @@ A high-performance cryptocurrency market screener built with Go, designed to mon
 
 ## Features
 
-- **Multi-Exchange Support**: Currently supports Bybit and Rate exchanges with modular architecture for easy extension
+- **Multi-Exchange Support**: Currently supports Bybit and Gate exchanges with modular architecture for easy extension
 - **Real-Time Order Book Monitoring**: Fetches and processes order book data at configurable intervals
 - **Concurrent Processing**: Leverages Go's concurrency for parallel data fetching across multiple symbols
 - **Modular Architecture**: Built with dependency injection using Uber's fx framework
@@ -15,7 +15,7 @@ A high-performance cryptocurrency market screener built with Go, designed to mon
 
 - Go 1.24.1 or higher
 - Docker and Docker Compose (optional, for containerized deployment)
-- API credentials for supported exchanges (Bybit, Rate)
+- API credentials for supported exchanges (Bybit, Gate)
 
 ## Installation
 
@@ -41,9 +41,9 @@ cp .env.example .env
 
 2. Edit `.env` and add your exchange API credentials:
 ```env
-# Rate Exchange Configuration
-RATE_API_URL=https://api.rate.com
-RATE_API_KEY=your_rate_api_key_here
+# Gate Exchange Configuration
+GATE_API_URL=https://api.rate.com
+GATE_API_KEY=your_api_key_here
 
 # Bybit Exchange Configuration
 BYBIT_API_URL=https://api.bybit.com
@@ -96,7 +96,7 @@ zero-delta-screener/
 │   ├── domain/          # Domain models and interfaces
 │   ├── providers/       # Exchange provider implementations
 │   │   ├── bybit/       # Bybit exchange integration
-│   │   └── rate/        # Rate exchange integration
+│   │   └── rate/        # Gate exchange integration
 │   └── screener/        # Core screening service logic
 ├── pkg/
 │   └── logger/          # Logging utilities

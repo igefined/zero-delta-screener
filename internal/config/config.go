@@ -2,35 +2,36 @@ package config
 
 import (
 	"os"
+	"strings"
 )
 
 type Config struct {
-	Rate  RateConfig
-	Bybit BybitConfig
+	Gate            GateConfig
+	ByBit           ByBitConfig
+	SupportedTokens []string
 }
 
-type RateConfig struct {
-	APIURL string
-	APIKey string
+type GateConfig struct {
+	WsURL     string
+	APIKey    string
+	APISecret string
 }
 
-type BybitConfig struct {
-	APIURL    string
+type ByBitConfig struct {
+	WsURL     string
 	APIKey    string
 	APISecret string
 }
 
 func Load() *Config {
 	return &Config{
-		Rate: RateConfig{
-			APIURL: getEnv("RATE_API_URL", "https://api.rate.com"),
-			APIKey: getEnv("RATE_API_KEY", ""),
+		Gate: GateConfig{
+			WsURL:     getEnv("GATE_WS_URL", "wss://api.gateio.ws/ws/v4/"),
+			APIKey:    getEnv("GATE_API_KEY", ""),
+			APISecret: getEnv("GATE_API_SECRET", ""),
 		},
-		Bybit: BybitConfig{
-			APIURL:    getEnv("BYBIT_API_URL", "https://api.bybit.com"),
-			APIKey:    getEnv("BYBIT_API_KEY", ""),
-			APISecret: getEnv("BYBIT_API_SECRET", ""),
-		},
+		ByBit:           ByBitConfig{},
+		SupportedTokens: getSupportedTokens(),
 	}
 }
 
@@ -39,4 +40,13 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getSupportedTokens() []string {
+	tokensEnv := getEnv("SUPPORTED_TOKENS", "")
+	if tokensEnv != "" {
+		return strings.Split(tokensEnv, ",")
+	}
+
+	return []string{"WLFI_USDT"}
 }

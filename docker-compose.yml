@@ -10,8 +10,8 @@ services:
     restart: unless-stopped
     environment:
       # Rate Exchange Configuration
-      RATE_API_URL: ${RATE_API_URL:-https://api.rate.com}
-      RATE_API_KEY: ${RATE_API_KEY}
+      GATE_API_URL: ${GATE_API_URL:-https://api.gate.com}
+      GATE_API_KEY: ${GATE_API_KEY}
       
       # Bybit Exchange Configuration  
       BYBIT_API_URL: ${BYBIT_API_URL:-https://api.bybit.com}

@@ -1,4 +1,4 @@
-package rate
+package gate
 
 import (
 	"go.uber.org/fx"
@@ -8,13 +8,13 @@ import (
 	"github.com/igefined/zero-delta-screener/internal/domain"
 )
 
-const moduleName = "Rate"
+const moduleName = "Gate"
 
 var Module = fx.Module(moduleName,
 	fx.Provide(
 		fx.Annotate(
 			func(cfg *config.Config, logger *zap.Logger) domain.Provider {
-				return NewProvider(cfg.Rate, logger)
+				return NewProvider(cfg.Gate, cfg.SupportedTokens, logger)
 			},
 			fx.ResultTags(`group:"providers"`),
 		),

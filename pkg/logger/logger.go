@@ -11,8 +11,7 @@ var Module = fx.Module("logger",
 )
 
 func NewLogger() (*zap.Logger, error) {
-	config := zap.NewDevelopmentConfig()
-	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	config := zap.NewProductionConfig()
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	
 	logger, err := config.Build()

@@ -30,7 +30,7 @@ func NewService(params Params) *Service {
 	return &Service{
 		providers: params.Providers,
 		logger:    params.Logger.Named("screener"),
-		interval:  10 * time.Second, // Default interval
+		interval:  time.Second,
 		stopCh:    make(chan struct{}),
 	}
 }
@@ -112,7 +112,11 @@ func (s *Service) screen(ctx context.Context) {
 			go func(p domain.Provider, sym string) {
 				defer wg.Done()
 
-				orderBook, err := p.FetchOrderBook(ctx, sym)
+				// Create a separate context with timeout for each orderbook fetch
+				fetchCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+
+				orderBook, err := p.FetchOrderBook(fetchCtx, sym)
 				if err != nil {
 					s.logger.Error("Failed to fetch order book",
 						zap.String("provider", p.Name()),
@@ -122,7 +126,12 @@ func (s *Service) screen(ctx context.Context) {
 				}
 
 				if orderBook != nil {
-					resultsCh <- orderBook
+					select {
+					case resultsCh <- orderBook:
+					case <-ctx.Done():
+						// Parent context cancelled, abort
+						return
+					}
 				}
 			}(provider, symbol)
 		}

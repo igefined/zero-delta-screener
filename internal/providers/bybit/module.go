@@ -14,7 +14,7 @@ var Module = fx.Module(moduleName,
 	fx.Provide(
 		fx.Annotate(
 			func(cfg *config.Config, logger *zap.Logger) domain.Provider {
-				return NewProvider(cfg.Bybit, logger)
+				return NewProvider(cfg.ByBit, logger)
 			},
 			fx.ResultTags(`group:"providers"`),
 		),

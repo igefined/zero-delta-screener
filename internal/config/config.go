@@ -30,7 +30,11 @@ func Load() *Config {
 			APIKey:    getEnv("GATE_API_KEY", ""),
 			APISecret: getEnv("GATE_API_SECRET", ""),
 		},
-		ByBit:           ByBitConfig{},
+		ByBit: ByBitConfig{
+			WsURL:     getEnv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/spot"),
+			APIKey:    getEnv("BYBIT_API_KEY", ""),
+			APISecret: getEnv("BYBIT_API_SECRET", ""),
+		},
 		SupportedTokens: getSupportedTokens(),
 	}
 }

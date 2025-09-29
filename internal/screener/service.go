@@ -51,9 +51,9 @@ func (s *Service) Start(ctx context.Context) error {
 			zap.String("provider", provider.Name()))
 	}
 
-	// Start screening loop
+	// Start screening loop with background context
 	s.wg.Add(1)
-	go s.screeningLoop(ctx)
+	go s.screeningLoop()
 
 	return nil
 }
@@ -76,30 +76,27 @@ func (s *Service) Stop() error {
 	return nil
 }
 
-func (s *Service) screeningLoop(ctx context.Context) {
+func (s *Service) screeningLoop() {
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
 	// Run immediately on start
-	s.screen(ctx)
+	s.screen()
 
 	for {
 		select {
-		case <-ctx.Done():
-			s.logger.Info("Context cancelled, stopping screening loop")
-			return
 		case <-s.stopCh:
 			s.logger.Info("Stop signal received, stopping screening loop")
 			return
 		case <-ticker.C:
-			s.screen(ctx)
+			s.screen()
 		}
 	}
 }
 
-func (s *Service) screen(ctx context.Context) {
+func (s *Service) screen() {
 	s.logger.Debug("Starting screening cycle")
 
 	var wg sync.WaitGroup
@@ -112,11 +109,7 @@ func (s *Service) screen(ctx context.Context) {
 			go func(p domain.Provider, sym string) {
 				defer wg.Done()
 
-				// Create a separate context with timeout for each orderbook fetch
-				fetchCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-
-				orderBook, err := p.FetchOrderBook(fetchCtx, sym)
+				orderBook, err := p.FetchOrderBook(sym)
 				if err != nil {
 					s.logger.Error("Failed to fetch order book",
 						zap.String("provider", p.Name()),
@@ -128,9 +121,6 @@ func (s *Service) screen(ctx context.Context) {
 				if orderBook != nil {
 					select {
 					case resultsCh <- orderBook:
-					case <-ctx.Done():
-						// Parent context cancelled, abort
-						return
 					}
 				}
 			}(provider, symbol)

@@ -6,7 +6,8 @@ import (
 
 type Provider interface {
 	Name() string
-	FetchOrderBook(ctx context.Context, symbol string) (*OrderBook, error)
+	FetchOrderBook(symbol string) (*OrderBook, error)
+	FetchOrderBooks(symbols []string) (map[string]*OrderBook, error)
 	GetSupportedSymbols() []string
 	Connect(ctx context.Context) error
 	Disconnect() error

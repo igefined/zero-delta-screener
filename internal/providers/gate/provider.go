@@ -23,7 +23,7 @@ type Provider struct {
 	conn            *websocket.Conn
 	mu              sync.RWMutex
 	writeMu         sync.Mutex
-	orderbookCache  map[string]*domain.OrderBook
+	orderBookCache  map[string]*domain.OrderBook
 	subscriptions   map[string]bool
 }
 
@@ -32,7 +32,7 @@ func NewProvider(cfg config.GateConfig, supportedTokens []string, logger *zap.Lo
 		config:          cfg,
 		supportedTokens: supportedTokens,
 		logger:          logger.Named("gate"),
-		orderbookCache:  make(map[string]*domain.OrderBook),
+		orderBookCache:  make(map[string]*domain.OrderBook),
 		subscriptions:   make(map[string]bool),
 	}
 }
@@ -73,7 +73,7 @@ func (p *Provider) Disconnect() error {
 	return nil
 }
 
-func (p *Provider) FetchOrderBook(ctx context.Context, symbol string) (*domain.OrderBook, error) {
+func (p *Provider) FetchOrderBook(symbol string) (*domain.OrderBook, error) {
 	p.logger.Info("Fetching order book", zap.String("symbol", symbol))
 
 	if err := p.subscribeToOrderbook(symbol); err != nil {
@@ -87,19 +87,17 @@ func (p *Provider) FetchOrderBook(ctx context.Context, symbol string) (*domain.O
 		select {
 		case <-ticker.C:
 			p.mu.RLock()
-			orderbook, exists := p.orderbookCache[symbol]
+			orderBook, exists := p.orderBookCache[symbol]
 			p.mu.RUnlock()
 
 			if exists {
-				return orderbook, nil
+				return orderBook, nil
 			}
-		case <-ctx.Done():
-			return nil, ctx.Err()
 		}
 	}
 }
 
-func (p *Provider) FetchOrderBooks(ctx context.Context, symbols []string) (map[string]*domain.OrderBook, error) {
+func (p *Provider) FetchOrderBooks(symbols []string) (map[string]*domain.OrderBook, error) {
 	p.logger.Info("Fetching multiple order books", zap.Strings("symbols", symbols))
 
 	results := make(map[string]*domain.OrderBook)
@@ -133,14 +131,12 @@ func (p *Provider) FetchOrderBooks(ctx context.Context, symbols []string) (map[s
 		case <-ticker.C:
 			p.mu.RLock()
 			for symbol := range pendingSymbols {
-				if orderbook, exists := p.orderbookCache[symbol]; exists {
+				if orderbook, exists := p.orderBookCache[symbol]; exists {
 					results[symbol] = orderbook
 					delete(pendingSymbols, symbol)
 				}
 			}
 			p.mu.RUnlock()
-		case <-ctx.Done():
-			return results, ctx.Err()
 		}
 	}
 
@@ -222,7 +218,7 @@ func (p *Provider) subscribeToOrderbook(symbol string) error {
 	return nil
 }
 
-type OrderbookResponse struct {
+type OrderBookResponse struct {
 	Time    int64         `json:"time"`
 	Channel string        `json:"channel"`
 	Event   string        `json:"event"`
@@ -276,6 +272,13 @@ func (p *Provider) processMessage(message []byte) {
 		return
 	}
 
+	// Log all messages for debugging
+	p.logger.Info("Received WebSocket message",
+		zap.String("channel", genericResponse.Channel),
+		zap.String("event", genericResponse.Event),
+		zap.Int64("time", genericResponse.Time),
+		zap.Any("result", genericResponse.Result))
+
 	// Check for subscription errors
 	if genericResponse.Error != nil {
 		p.logger.Warn("WebSocket subscription error",
@@ -286,8 +289,8 @@ func (p *Provider) processMessage(message []byte) {
 	}
 
 	// Process orderbook updates
-	if genericResponse.Channel == "spot.obu" && genericResponse.Event == "update" {
-		var response OrderbookResponse
+	if genericResponse.Channel == "spot.order_book_update" && genericResponse.Event == "update" {
+		var response OrderBookResponse
 		if err := json.Unmarshal(message, &response); err != nil {
 			p.logger.Error("Failed to unmarshal orderbook response", zap.Error(err))
 			return
@@ -300,10 +303,10 @@ func (p *Provider) processMessage(message []byte) {
 	}
 }
 
-func (p *Provider) processOrderBookUpdate(response OrderbookResponse) {
+func (p *Provider) processOrderBookUpdate(response OrderBookResponse) {
 	symbol := response.Result.S
 
-	orderbook := &domain.OrderBook{
+	orderBook := &domain.OrderBook{
 		Exchange:  moduleName,
 		Symbol:    symbol,
 		Timestamp: time.Now(),
@@ -316,7 +319,7 @@ func (p *Provider) processOrderBookUpdate(response OrderbookResponse) {
 			price := parseFloat(bid[0])
 			volume := parseFloat(bid[1])
 			if price > 0 && volume > 0 {
-				orderbook.Bids = append(orderbook.Bids, domain.Order{
+				orderBook.Bids = append(orderBook.Bids, domain.Order{
 					Price:  price,
 					Volume: volume,
 				})
@@ -329,7 +332,7 @@ func (p *Provider) processOrderBookUpdate(response OrderbookResponse) {
 			price := parseFloat(ask[0])
 			volume := parseFloat(ask[1])
 			if price > 0 && volume > 0 {
-				orderbook.Asks = append(orderbook.Asks, domain.Order{
+				orderBook.Asks = append(orderBook.Asks, domain.Order{
 					Price:  price,
 					Volume: volume,
 				})
@@ -338,13 +341,13 @@ func (p *Provider) processOrderBookUpdate(response OrderbookResponse) {
 	}
 
 	p.mu.Lock()
-	p.orderbookCache[symbol] = orderbook
+	p.orderBookCache[symbol] = orderBook
 	p.mu.Unlock()
 
 	p.logger.Debug("Updated orderbook",
 		zap.String("symbol", symbol),
-		zap.Int("bids", len(orderbook.Bids)),
-		zap.Int("asks", len(orderbook.Asks)))
+		zap.Int("bids", len(orderBook.Bids)),
+		zap.Int("asks", len(orderBook.Asks)))
 }
 
 func parseFloat(s string) float64 {

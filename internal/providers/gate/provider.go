@@ -1,7 +1,6 @@
 package gate
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
@@ -11,9 +10,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
+
 	"github.com/igefined/zero-delta-screener/internal/config"
 	"github.com/igefined/zero-delta-screener/internal/domain"
-	"go.uber.org/zap"
 )
 
 type Provider struct {
@@ -41,7 +41,7 @@ func (p *Provider) Name() string {
 	return moduleName
 }
 
-func (p *Provider) Connect(ctx context.Context) error {
+func (p *Provider) Connect(closeCh <-chan struct{}) error {
 	p.logger.Info("Connecting to Gate exchange")
 
 	dialer := websocket.DefaultDialer
@@ -54,7 +54,7 @@ func (p *Provider) Connect(ctx context.Context) error {
 	p.conn = conn
 	p.mu.Unlock()
 
-	go p.messageHandler(ctx)
+	go p.messageHandler(closeCh)
 
 	p.logger.Info("Connected to Gate exchange")
 	return nil
@@ -74,27 +74,32 @@ func (p *Provider) Disconnect() error {
 }
 
 func (p *Provider) FetchOrderBook(symbol string) (*domain.OrderBook, error) {
-	p.logger.Info("Fetching order book", zap.String("symbol", symbol))
+	p.logger.Debug("Fetching order book", zap.String("symbol", symbol))
 
-	if err := p.subscribeToOrderbook(symbol); err != nil {
+	// Normalize the symbol for consistent caching
+	normalizedSymbol := domain.NormalizeSymbol(symbol)
+
+	// Convert to Gate-specific format for API subscription
+	gateSymbol := domain.ToExchangeFormat(normalizedSymbol, "gate")
+
+	if err := p.subscribeToOrderbook(gateSymbol); err != nil {
 		return nil, fmt.Errorf("failed to subscribe to orderbook: %w", err)
 	}
 
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			p.mu.RLock()
-			orderBook, exists := p.orderBookCache[symbol]
-			p.mu.RUnlock()
+	for range ticker.C {
+		p.mu.RLock()
+		orderBook, exists := p.orderBookCache[normalizedSymbol]
+		p.mu.RUnlock()
 
-			if exists {
-				return orderBook, nil
-			}
+		if exists {
+			return orderBook, nil
 		}
 	}
+
+	return nil, fmt.Errorf("failed to fetch orderbook for symbol %s", symbol)
 }
 
 func (p *Provider) FetchOrderBooks(symbols []string) (map[string]*domain.OrderBook, error) {
@@ -166,7 +171,6 @@ func (p *Provider) genSign(channel, event string, timestamp int64) map[string]st
 }
 
 func (p *Provider) subscribeToOrderbook(symbol string) error {
-	// Check if already subscribed to avoid duplicate subscriptions
 	p.mu.RLock()
 	conn := p.conn
 	alreadySubscribed := p.subscriptions[symbol]
@@ -177,7 +181,7 @@ func (p *Provider) subscribeToOrderbook(symbol string) error {
 	}
 
 	if alreadySubscribed {
-		return nil // Already subscribed, no need to subscribe again
+		return nil
 	}
 
 	timestamp := time.Now().Unix()
@@ -201,7 +205,6 @@ func (p *Provider) subscribeToOrderbook(symbol string) error {
 		return fmt.Errorf("failed to marshal subscription request: %w", err)
 	}
 
-	// Use write mutex to prevent concurrent writes to websocket
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 
@@ -210,7 +213,6 @@ func (p *Provider) subscribeToOrderbook(symbol string) error {
 		return fmt.Errorf("failed to send subscription request: %w", err)
 	}
 
-	// Mark as subscribed
 	p.mu.Lock()
 	p.subscriptions[symbol] = true
 	p.mu.Unlock()
@@ -232,10 +234,10 @@ type OrderbookData struct {
 	A [][]string `json:"a"`
 }
 
-func (p *Provider) messageHandler(ctx context.Context) {
+func (p *Provider) messageHandler(closeCh <-chan struct{}) {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-closeCh:
 			return
 		default:
 			p.mu.RLock()
@@ -258,7 +260,6 @@ func (p *Provider) messageHandler(ctx context.Context) {
 }
 
 func (p *Provider) processMessage(message []byte) {
-	// First try to parse as a general response to check for errors
 	var genericResponse struct {
 		Time    int64       `json:"time"`
 		Channel string      `json:"channel"`
@@ -272,14 +273,12 @@ func (p *Provider) processMessage(message []byte) {
 		return
 	}
 
-	// Log all messages for debugging
-	p.logger.Info("Received WebSocket message",
+	p.logger.Debug("Received WebSocket message",
 		zap.String("channel", genericResponse.Channel),
 		zap.String("event", genericResponse.Event),
 		zap.Int64("time", genericResponse.Time),
 		zap.Any("result", genericResponse.Result))
 
-	// Check for subscription errors
 	if genericResponse.Error != nil {
 		p.logger.Warn("WebSocket subscription error",
 			zap.String("channel", genericResponse.Channel),
@@ -306,9 +305,12 @@ func (p *Provider) processMessage(message []byte) {
 func (p *Provider) processOrderBookUpdate(response OrderBookResponse) {
 	symbol := response.Result.S
 
+	// Normalize the symbol for consistent caching across exchanges
+	normalizedSymbol := domain.NormalizeSymbol(symbol)
+
 	orderBook := &domain.OrderBook{
 		Exchange:  moduleName,
-		Symbol:    symbol,
+		Symbol:    normalizedSymbol,
 		Timestamp: time.Now(),
 		Bids:      make([]domain.Order, 0),
 		Asks:      make([]domain.Order, 0),
@@ -341,7 +343,7 @@ func (p *Provider) processOrderBookUpdate(response OrderBookResponse) {
 	}
 
 	p.mu.Lock()
-	p.orderBookCache[symbol] = orderBook
+	p.orderBookCache[normalizedSymbol] = orderBook
 	p.mu.Unlock()
 
 	p.logger.Debug("Updated orderbook",

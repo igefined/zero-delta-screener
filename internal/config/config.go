@@ -52,5 +52,5 @@ func getSupportedTokens() []string {
 		return strings.Split(tokensEnv, ",")
 	}
 
-	return []string{"WLFI_USDT"}
+	return []string{"WLFI_USDT", "PUMP_USDT", "BONK_USDT", "TRUMP_USDT", "JUP_USDT"}
 }

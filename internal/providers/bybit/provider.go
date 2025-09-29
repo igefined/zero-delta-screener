@@ -1,21 +1,20 @@
 package bybit
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
+
 	"github.com/igefined/zero-delta-screener/internal/config"
 	"github.com/igefined/zero-delta-screener/internal/domain"
-	"go.uber.org/zap"
 )
 
 type Provider struct {
@@ -43,7 +42,7 @@ func (p *Provider) Name() string {
 	return moduleName
 }
 
-func (p *Provider) Connect(ctx context.Context) error {
+func (p *Provider) Connect(closeCh <-chan struct{}) error {
 	p.logger.Info("Connecting to ByBit exchange")
 
 	dialer := websocket.DefaultDialer
@@ -56,8 +55,8 @@ func (p *Provider) Connect(ctx context.Context) error {
 	p.conn = conn
 	p.mu.Unlock()
 
-	go p.messageHandler(ctx)
-	go p.pingHandler(ctx)
+	go p.messageHandler(closeCh)
+	go p.pingHandler(closeCh)
 
 	p.logger.Info("Connected to ByBit exchange")
 	return nil
@@ -77,10 +76,13 @@ func (p *Provider) Disconnect() error {
 }
 
 func (p *Provider) FetchOrderBook(symbol string) (*domain.OrderBook, error) {
-	p.logger.Info("Fetching order book", zap.String("symbol", symbol))
+	p.logger.Debug("Fetching order book", zap.String("symbol", symbol))
 
-	before, after, _ := strings.Cut(symbol, "_")
-	bbSymbol := strings.ToUpper(fmt.Sprintf("%s%s", before, after))
+	// Normalize the symbol for consistent caching
+	normalizedSymbol := domain.NormalizeSymbol(symbol)
+
+	// Convert to ByBit-specific format for API subscription
+	bbSymbol := domain.ToExchangeFormat(normalizedSymbol, "bybit")
 
 	if err := p.subscribeToOrderBook(bbSymbol); err != nil {
 		return nil, fmt.Errorf("failed to subscribe to orderbook: %w", err)
@@ -89,22 +91,17 @@ func (p *Provider) FetchOrderBook(symbol string) (*domain.OrderBook, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	timeout := time.After(10 * time.Second)
+	for range ticker.C {
+		p.mu.RLock()
+		orderBook, exists := p.orderBookCache[normalizedSymbol]
+		p.mu.RUnlock()
 
-	for {
-		select {
-		case <-ticker.C:
-			p.mu.RLock()
-			orderBook, exists := p.orderBookCache[symbol]
-			p.mu.RUnlock()
-
-			if exists {
-				return orderBook, nil
-			}
-		case <-timeout:
-			return nil, fmt.Errorf("timeout waiting for orderbook data for symbol: %s", symbol)
+		if exists {
+			return orderBook, nil
 		}
 	}
+
+	return nil, fmt.Errorf("failed to fetch orderbook for symbol %s", symbol)
 }
 
 func (p *Provider) FetchOrderBooks(symbols []string) (map[string]*domain.OrderBook, error) {
@@ -231,7 +228,7 @@ func (p *Provider) subscribeToOrderBook(symbol string) error {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
 
-	p.logger.Info("Subscribing to orderbook", zap.String("symbol", symbol))
+	p.logger.Info("Subscribing to orderBook", zap.String("symbol", symbol))
 	if err = conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 		return fmt.Errorf("failed to send subscription request: %w", err)
 	}
@@ -243,13 +240,13 @@ func (p *Provider) subscribeToOrderBook(symbol string) error {
 	return nil
 }
 
-func (p *Provider) pingHandler(ctx context.Context) {
+func (p *Provider) pingHandler(closeCh <-chan struct{}) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-closeCh:
 			return
 		case <-ticker.C:
 			p.mu.RLock()
@@ -289,10 +286,10 @@ type OrderBookMessage struct {
 	} `json:"data"`
 }
 
-func (p *Provider) messageHandler(ctx context.Context) {
+func (p *Provider) messageHandler(ch <-chan struct{}) {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ch:
 			return
 		default:
 			p.mu.RLock()
@@ -372,9 +369,12 @@ func (p *Provider) processMessage(message []byte) {
 func (p *Provider) processOrderBookUpdate(msg OrderBookMessage) {
 	symbol := msg.Data.S
 
+	// Normalize the symbol for consistent caching across exchanges
+	normalizedSymbol := domain.NormalizeSymbol(symbol)
+
 	orderBook := &domain.OrderBook{
 		Exchange:  moduleName,
-		Symbol:    symbol,
+		Symbol:    normalizedSymbol,
 		Timestamp: time.UnixMilli(msg.Ts),
 		Bids:      make([]domain.Order, 0),
 		Asks:      make([]domain.Order, 0),
@@ -424,12 +424,12 @@ func (p *Provider) processOrderBookUpdate(msg OrderBookMessage) {
 
 	p.mu.Lock()
 	if msg.Type == "snapshot" {
-		p.orderBookCache[symbol] = orderBook
+		p.orderBookCache[normalizedSymbol] = orderBook
 	} else if msg.Type == "delta" {
-		if existingBook, exists := p.orderBookCache[symbol]; exists {
+		if existingBook, exists := p.orderBookCache[normalizedSymbol]; exists {
 			p.mergeOrderBookDelta(existingBook, orderBook)
 		} else {
-			p.orderBookCache[symbol] = orderBook
+			p.orderBookCache[normalizedSymbol] = orderBook
 		}
 	}
 	p.mu.Unlock()

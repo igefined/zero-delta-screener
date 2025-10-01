@@ -37,7 +37,7 @@ func NewService(params Params) *Service {
 		interval:         time.Second,
 		stopCh:           make(chan struct{}),
 		orderBookCache:   make(map[string]map[string]*domain.OrderBook),
-		minProfitPercent: 0.1, // 0.1% minimum profit threshold
+		minProfitPercent: 0.5, // 0.1% minimum profit threshold
 	}
 }
 

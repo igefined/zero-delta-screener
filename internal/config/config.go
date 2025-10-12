@@ -8,6 +8,7 @@ import (
 type Config struct {
 	Gate            GateConfig
 	ByBit           ByBitConfig
+	Bitquery        BitqueryConfig
 	SupportedTokens []string
 }
 
@@ -23,6 +24,11 @@ type ByBitConfig struct {
 	APISecret string
 }
 
+type BitqueryConfig struct {
+	GrpcEndpoint string
+	APIToken     string
+}
+
 func Load() *Config {
 	return &Config{
 		Gate: GateConfig{
@@ -34,6 +40,10 @@ func Load() *Config {
 			WsURL:     getEnv("BYBIT_WS_URL", "wss://stream.bybit.com/v5/public/spot"),
 			APIKey:    getEnv("BYBIT_API_KEY", ""),
 			APISecret: getEnv("BYBIT_API_SECRET", ""),
+		},
+		Bitquery: BitqueryConfig{
+			GrpcEndpoint: getEnv("BITQUERY_GRPC_ENDPOINT", "corecast.bitquery.io:443"),
+			APIToken:     getEnv("BITQUERY_API_TOKEN", ""),
 		},
 		SupportedTokens: getSupportedTokens(),
 	}

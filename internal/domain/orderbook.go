@@ -38,6 +38,7 @@ type ArbitrageOpportunity struct {
 	ProfitPercent  float64   `json:"profit_percent"`
 	Volume         float64   `json:"volume"`
 	Timestamp      time.Time `json:"timestamp"`
+	OpportunityType string   `json:"opportunity_type"` // "CEX-CEX", "CEX-DEX", "DEX-DEX"
 }
 
 // NormalizeSymbol converts various symbol formats to a standardized underscore format.
@@ -82,5 +83,32 @@ func ToExchangeFormat(normalizedSymbol, exchange string) string {
 	default:
 		// Default to normalized format
 		return normalizedSymbol
+	}
+}
+
+// IsDEX returns true if the exchange is a decentralized exchange
+func IsDEX(exchange string) bool {
+	dexExchanges := []string{"bitquery", "uniswap", "sushiswap", "pancakeswap", "raydium", "orca", "jupiter"}
+	exchangeLower := strings.ToLower(exchange)
+	
+	for _, dex := range dexExchanges {
+		if exchangeLower == dex {
+			return true
+		}
+	}
+	return false
+}
+
+// GetOpportunityType determines the type of arbitrage opportunity
+func GetOpportunityType(buyExchange, sellExchange string) string {
+	buyIsDEX := IsDEX(buyExchange)
+	sellIsDEX := IsDEX(sellExchange)
+	
+	if buyIsDEX && sellIsDEX {
+		return "DEX-DEX"
+	} else if !buyIsDEX && !sellIsDEX {
+		return "CEX-CEX"
+	} else {
+		return "CEX-DEX"
 	}
 }

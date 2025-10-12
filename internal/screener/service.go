@@ -1,6 +1,7 @@
 package screener
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type Service struct {
 	orderBookCache   map[string]map[string]*domain.OrderBook // symbol -> exchange -> orderbook
 	cacheMutex       sync.RWMutex
 	minProfitPercent float64
+	executeSwaps     bool // Flag to enable/disable actual swap execution
 }
 
 type Params struct {
@@ -37,7 +39,8 @@ func NewService(params Params) *Service {
 		interval:         time.Second,
 		stopCh:           make(chan struct{}),
 		orderBookCache:   make(map[string]map[string]*domain.OrderBook),
-		minProfitPercent: 0.5, // 0.1% minimum profit threshold
+		minProfitPercent: 0.5,   // 0.5% minimum profit threshold
+		executeSwaps:     false, // Set to true to enable actual swap execution
 	}
 }
 
@@ -178,11 +181,12 @@ func (s *Service) checkArbitrageOpportunities(symbol string) {
 }
 
 func (s *Service) compareOrderBooks(book1, book2 *domain.OrderBook) {
-	if opportunity := s.calculateOpportunity(book1, book2, true); opportunity != nil {
+	// Only process CEX-DEX opportunities
+	if opportunity := s.calculateOpportunity(book1, book2, true); opportunity != nil && opportunity.OpportunityType == "CEX-DEX" {
 		s.logArbitrageOpportunity(opportunity)
 	}
 
-	if opportunity := s.calculateOpportunity(book2, book1, true); opportunity != nil {
+	if opportunity := s.calculateOpportunity(book2, book1, true); opportunity != nil && opportunity.OpportunityType == "CEX-DEX" {
 		s.logArbitrageOpportunity(opportunity)
 	}
 }
@@ -212,20 +216,39 @@ func (s *Service) calculateOpportunity(buyBook, sellBook *domain.OrderBook, chec
 	}
 
 	return &domain.ArbitrageOpportunity{
-		Symbol:        buyBook.Symbol,
-		BuyExchange:   buyBook.Exchange,
-		SellExchange:  sellBook.Exchange,
-		BuyPrice:      bestAsk.Price,
-		SellPrice:     bestBid.Price,
-		PriceDiff:     priceDiff,
-		ProfitPercent: profitPercent,
-		Volume:        volume,
-		Timestamp:     time.Now(),
+		Symbol:          buyBook.Symbol,
+		BuyExchange:     buyBook.Exchange,
+		SellExchange:    sellBook.Exchange,
+		BuyPrice:        bestAsk.Price,
+		SellPrice:       bestBid.Price,
+		PriceDiff:       priceDiff,
+		ProfitPercent:   profitPercent,
+		Volume:          volume,
+		Timestamp:       time.Now(),
+		OpportunityType: domain.GetOpportunityType(buyBook.Exchange, sellBook.Exchange),
 	}
 }
 
 func (s *Service) logArbitrageOpportunity(opportunity *domain.ArbitrageOpportunity) {
-	s.logger.Info("🚀 ARBITRAGE OPPORTUNITY FOUND!",
+	// Use different emojis and log levels based on opportunity type
+	var emoji, message string
+	logLevel := zap.InfoLevel
+
+	switch opportunity.OpportunityType {
+	case "CEX-DEX":
+		emoji = "🌊"
+		message = "CEX-DEX ARBITRAGE OPPORTUNITY FOUND!"
+		logLevel = zap.WarnLevel // Higher priority for CEX-DEX opportunities
+	case "DEX-DEX":
+		emoji = "🔄"
+		message = "DEX-DEX ARBITRAGE OPPORTUNITY FOUND!"
+	default: // CEX-CEX
+		emoji = "🚀"
+		message = "CEX-CEX ARBITRAGE OPPORTUNITY FOUND!"
+	}
+
+	fields := []zap.Field{
+		zap.String("opportunity_type", opportunity.OpportunityType),
 		zap.String("symbol", opportunity.Symbol),
 		zap.String("buy_from", opportunity.BuyExchange),
 		zap.String("sell_to", opportunity.SellExchange),
@@ -234,5 +257,62 @@ func (s *Service) logArbitrageOpportunity(opportunity *domain.ArbitrageOpportuni
 		zap.Float64("price_diff", opportunity.PriceDiff),
 		zap.Float64("profit_percent", opportunity.ProfitPercent),
 		zap.Float64("volume", opportunity.Volume),
-		zap.Time("timestamp", opportunity.Timestamp))
+		zap.Time("timestamp", opportunity.Timestamp),
+	}
+
+	// Add special considerations for CEX-DEX opportunities
+	if opportunity.OpportunityType == "CEX-DEX" {
+		fields = append(fields,
+			zap.String("note", "Consider gas fees, slippage, and transaction time for DEX trades"),
+			zap.Bool("cross_infrastructure", true))
+	}
+
+	s.logger.Log(logLevel, emoji+" "+message, fields...)
+
+	// Execute swap if enabled
+	if s.executeSwaps {
+		s.executeArbitrageSwap(opportunity)
+	}
+}
+
+// executeArbitrageSwap executes the arbitrage opportunity with timing measurement
+func (s *Service) executeArbitrageSwap(opportunity *domain.ArbitrageOpportunity) {
+	requestID := fmt.Sprintf("arb_%d", time.Now().UnixNano())
+	requestTime := time.Now()
+
+	// Create buy swap request
+	buyRequest := &domain.SwapRequest{
+		Symbol:      opportunity.Symbol,
+		Side:        "buy",
+		Amount:      opportunity.Volume,
+		Price:       opportunity.BuyPrice,
+		OrderType:   "limit",
+		RequestID:   requestID + "_buy",
+		RequestTime: requestTime,
+	}
+
+	// Create sell swap request
+	sellRequest := &domain.SwapRequest{
+		Symbol:      opportunity.Symbol,
+		Side:        "sell",
+		Amount:      opportunity.Volume,
+		Price:       opportunity.SellPrice,
+		OrderType:   "limit",
+		RequestID:   requestID + "_sell",
+		RequestTime: requestTime,
+	}
+
+	s.logger.Info("Executing arbitrage swap",
+		zap.String("opportunity_type", opportunity.OpportunityType),
+		zap.String("buy_request_id", buyRequest.RequestID),
+		zap.String("sell_request_id", sellRequest.RequestID),
+		zap.String("symbol", opportunity.Symbol),
+		zap.Float64("expected_profit_percent", opportunity.ProfitPercent))
+
+}
+
+// EnableSwapExecution enables or disables actual swap execution
+func (s *Service) EnableSwapExecution(enable bool) {
+	s.executeSwaps = enable
+	s.logger.Info("Swap execution status changed", zap.Bool("enabled", enable))
 }

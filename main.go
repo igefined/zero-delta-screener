@@ -6,6 +6,7 @@ import (
 	"github.com/igefined/zero-delta-screener/pkg/logger"
 
 	"github.com/igefined/zero-delta-screener/internal/config"
+	"github.com/igefined/zero-delta-screener/internal/providers/bitquery"
 	"github.com/igefined/zero-delta-screener/internal/providers/bybit"
 	"github.com/igefined/zero-delta-screener/internal/providers/gate"
 	"github.com/igefined/zero-delta-screener/internal/screener"
@@ -18,6 +19,7 @@ func main() {
 		// Provider modules
 		gate.Module,
 		bybit.Module,
+		bitquery.Module,
 		// Business logic modules
 		screener.Module,
 	).Run()

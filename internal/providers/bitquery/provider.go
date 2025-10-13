@@ -8,9 +8,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/igefined/zero-delta-screener/internal/config"
 	"github.com/igefined/zero-delta-screener/internal/domain"
@@ -20,9 +17,6 @@ type Provider struct {
 	config          config.BitqueryConfig
 	supportedTokens []string
 	logger          *zap.Logger
-
-	// gRPC connection
-	conn *grpc.ClientConn
 
 	// Order book construction from trades
 	orderBookCache map[string]*domain.OrderBook
@@ -42,38 +36,28 @@ func (p *Provider) Name() string {
 }
 
 func (p *Provider) Connect(closeCh <-chan struct{}) error {
-	p.logger.Info("Connecting to Bitquery CoreCast gRPC")
+	p.logger.Info("Connecting to Bitquery Streaming API")
 
 	// Create context with cancellation
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
-	// Establish gRPC connection
-	conn, err := grpc.NewClient(
-		p.config.GrpcEndpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to connect to Bitquery gRPC: %w", err)
+	// Start streaming
+	if err := p.connectToStreaming(p.ctx); err != nil {
+		return fmt.Errorf("failed to connect to streaming: %w", err)
 	}
 
-	p.conn = conn
+	// Monitor connection
+	go p.monitorConnection(closeCh)
 
-	// Start streaming DEX trades
-	go p.streamDexTrades(closeCh)
-
-	p.logger.Info("Connected to Bitquery CoreCast gRPC")
+	p.logger.Info("Connected to Bitquery Streaming API")
 	return nil
 }
 
 func (p *Provider) Disconnect() error {
-	p.logger.Info("Disconnecting from Bitquery CoreCast")
+	p.logger.Info("Disconnecting from Bitquery Streaming API")
 
 	if p.cancel != nil {
 		p.cancel()
-	}
-
-	if p.conn != nil {
-		return p.conn.Close()
 	}
 
 	return nil
@@ -138,95 +122,35 @@ func (p *Provider) GetSupportedSymbols() []string {
 	return p.supportedTokens
 }
 
-func (p *Provider) streamDexTrades(closeCh <-chan struct{}) {
+func (p *Provider) monitorConnection(closeCh <-chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			p.logger.Error("Panic in DEX trade streaming", zap.Any("error", r))
+			p.logger.Error("Panic in connection monitor", zap.Any("error", r))
 		}
 	}()
-
-	// Create metadata with authentication
-	md := metadata.New(map[string]string{
-		"authorization": "Bearer " + p.config.APIToken,
-	})
-	ctx := metadata.NewOutgoingContext(p.ctx, md)
-
-	// Create streaming request
-	req := &DexTradeRequest{
-		Tokens:       p.supportedTokens,
-		MinVolumeUSD: 100, // Minimum $100 volume to reduce noise
-	}
 
 	for {
 		select {
 		case <-closeCh:
-			p.logger.Info("Stopping DEX trade streaming")
+			p.logger.Info("Stopping connection monitor")
 			return
 		case <-p.ctx.Done():
-			p.logger.Info("Context cancelled, stopping DEX trade streaming")
+			p.logger.Info("Context cancelled, stopping connection monitor")
 			return
-		default:
-			if err := p.connectAndStream(ctx, req); err != nil {
-				p.logger.Error("DEX streaming error, retrying in 5s", zap.Error(err))
+		case <-time.After(30 * time.Second):
+			// Check if we have recent data
+			p.tradeMutex.RLock()
+			hasData := len(p.orderBookCache) > 0
+			p.tradeMutex.RUnlock()
 
-				select {
-				case <-time.After(5 * time.Second):
-					continue
-				case <-closeCh:
-					return
-				case <-p.ctx.Done():
-					return
+			if !hasData {
+				p.logger.Warn("No data received recently, attempting to reconnect")
+				if err := p.connectToStreaming(p.ctx); err != nil {
+					p.logger.Error("Failed to reconnect to streaming", zap.Error(err))
 				}
 			}
 		}
 	}
-}
-
-func (p *Provider) connectAndStream(ctx context.Context, req *DexTradeRequest) error {
-	// Note: Since we don't have the actual gRPC service implementation,
-	// we'll simulate the streaming with a mock implementation
-	// In a real implementation, this would be:
-	// stream, err := p.client.StreamDexTrades(ctx, req)
-
-	p.logger.Info("Starting DEX trade stream simulation")
-
-	// Simulate streaming with periodic mock data
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			// Generate mock DEX trade data for testing
-			if err := p.processMockTrade(); err != nil {
-				p.logger.Error("Failed to process mock trade", zap.Error(err))
-			}
-		}
-	}
-}
-
-func (p *Provider) processMockTrade() error {
-	// Generate mock trade for testing purposes
-	// In real implementation, this would process actual DexTrade messages
-	for _, symbol := range p.supportedTokens {
-		normalizedSymbol := domain.NormalizeSymbol(symbol)
-
-		// Create synthetic order book based on mock trade data
-		orderBook := p.createSyntheticOrderBook(normalizedSymbol, 1.0) // Mock price of 1.0
-
-		p.tradeMutex.Lock()
-		p.orderBookCache[normalizedSymbol] = orderBook
-		p.tradeMutex.Unlock()
-
-		p.logger.Debug("Updated synthetic order book",
-			zap.String("symbol", normalizedSymbol),
-			zap.Int("bids", len(orderBook.Bids)),
-			zap.Int("asks", len(orderBook.Asks)))
-	}
-
-	return nil
 }
 
 func (p *Provider) createSyntheticOrderBook(symbol string, midPrice float64) *domain.OrderBook {
